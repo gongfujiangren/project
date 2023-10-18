@@ -1,0 +1,328 @@
+---
+title: "Survival analysis based on telecom dataset"
+author: "YeLiu (Ruby)"
+date: "2023-10-17"
+output: html_document
+---
+
+```{r setup, include=TRUE}
+knitr::opts_chunk$set(warning = FALSE,echo = TRUE,message = FALSE)
+```
+
+### Introduction:
+#### Use the telecommunications data set for survival analysis. “Survival time” represents how long a customer stays with a telecommunications provider before churn, and the outcome variable is typically binary, with 1 indicating churn (failure) and 0 indicating no churn (survival).
+
+#### https://www.kaggle.com/datasets/mnassrib/telecom-churn-datasets/data
+
+### What I am trying to explore:\
+
+- Kaplan-Meier survival curves.(Visually observe how long customers typically use a specific telecommunications service before churn.)
+
+- Stratified survival curves and Cox regression were used to examine the effect of different covariates on attrition.
+
+- Parametric model (Weibull, lognormal, exponential,gaussian) model to fit the survival model.
+
+### Hazard and risk assessment\
+#### hazard function: potential of failure in an infinitesimally small time period between t and t + Δt given that the subject has survived up till time t = P(individual fails in the interval [t, t + Δt] survival up to time t). In other words, the hazard function h(t) gives the instantaneous potential per unit time for the event to occur, given that the individual has survived up to time t. (not a density or a probability, always positive with no upper bound)\
+
+#### The hazard rate indicates failure potential rather than survival probability. Thus, the higher the average hazard rate, the lower is the group’s probability of surviving.\
+
+#### Calculate and analyze the hazard rate, which represents the instantaneous probability of churn occurring at a given time. Use Cox regression or other appropriate methods to identify covariates or factors associated with a higher or lower risk of attrition.
+
+```{r}
+library(ggplot2)
+library("survival")
+library("survminer")
+```
+
+```{r}
+dat=read.csv("C:/Users/13587/Desktop/kaggle/churn-bigml-80.csv")
+#head(dat)
+str(dat)
+```
+### Dataset description
+#### https://medium.com/@islamhasabo/predicting-customer-churn-bc76f7760377
+#### Account Length: the number of days that this account has been active\
+#### First check the dataset, if there are any missing values.\
+
+```{r}
+summary(dat)
+#select rows with NA values in any column
+na_rows <- dat[!complete.cases(dat), ]
+na_rows
+#counting na
+sum(is.na(dat))
+```
+
+```{r}
+dat$Churn <- ifelse(dat$Churn == "True", 1, 0)
+```
+
+```{r}
+#histograms of each cols
+col_names=colnames(dat)
+
+# Set the size of the plot
+par(mfrow = c(4, 5), mar = c(4, 4, 2, 1))  # Adjust the 'mar' parameter to control margins
+
+# Loop through each column and create histograms for numeric columns
+for (i in 1:ncol(dat)) {
+  if (is.numeric(dat[[i]])) {
+    hist(dat[[i]], main = paste(col_names[i]), xlab = col_names[i])
+    box()
+  }
+}
+
+# observe categorical variable
+par(mfrow=c(1, 4))
+for (i in 1:ncol(dat)) {
+  if (is.character(dat[[i]])) {
+    table_data <- table(dat[[i]])
+    #pie(table_data, main = paste("Pie Chart of", colnames(dat)[i]), labels = table_data, col = rainbow(length(table_data)))
+    barplot(table_data, main=paste(colnames(dat)[i]), xlab=table_data, ylab="Frequency")
+
+  }
+}
+```
+
+#### Here use package"DataExplorer" makes everything easier.\
+
+```{r}
+library(DataExplorer)
+#missing value and visualization distributions for all continuous features:
+plot_intro(dat)
+plot_missing(dat, group=c("Good"=1.0), theme_config=list(text = element_text(size = 16)))
+plot_histogram(dat)
+```
+
+### Correlation Analysis\
+#### Evaluate the relationship between explanatory variables and survival time\
+```{r}
+plot_correlation(na.omit(dat), maxcat = 5L)
+# type = "c"/"d" for only discrete/continuous features
+```
+
+#### Include all continuous and categorical variables in the heat map. The positive correlation between total mins/calls/charge (day/night) is obvious. Here we focus on the positive and negative correlations between churn and other variables.\
+#### Churn is slightly positive relation with:Total.day.minutes/Total.day.charge/Customer.service.calls/International.plan_Yes\
+#### Churn is slightly negative relation with:International.plan_No. \
+#### Or there is no obvious trend from the heat map and the correlation coefficient is too low.\
+
+### Kaplan Meier model\
+#### With the survfit() function, we create a simple survival curve that doesn’t consider any different groupings, so we’ll specify just an intercept (e.g., ~1) in the formula that survfit expects.\
+
+#### NA explanation: If there is still more than 50% survival rate in the group at the last time point, the median survival rate NA is obtained.\
+
+#### Note that the median survival time is 197 days.(95%CI)[181,?]\
+
+```{r}
+dat$Account.length=as.numeric(dat$Account.length)
+#str(dat)
+fit <- survfit(Surv(Account.length, Churn) ~ 1, data = dat)
+print(fit)
+# Summary of survival curves 
+#summary(fit)
+```
+#### function ggsurvplot() to produce the survival curves for the two groups of subjects.\
+```{r}
+ggsurvplot(fit, 
+            xlab="Days", 
+            ylab="Survival Probability",
+            risk.table=TRUE,
+            conf.int=TRUE,
+            surv.median.line="hv",
+           title = "Survival curves")  # draw horizontal AND vertical line for median
+```
+
+#### Cumulative risk (H(t)) can be interpreted as the cumulative force of mortality. In other words, it corresponds to the number of events that would be expected to occur for each person at time t if the event were a repeatable process.\
+
+```{r}
+#Cumulative risk curve/event
+##As time (t) increases, the cumulative risk increases, reflecting the growing likelihood of experiencing the event.\
+ggsurvplot(fit,xlab="Days", 
+           fun = "cumhaz", #"event"
+           conf.int = TRUE, # confidence Interval
+           palette = "lancet",
+           ggtheme = theme_bw() ,title = "Survival curves"
+)
+
+#This plot shows the number of events (survival events or failures) at each time point, reflecting how the events are distributed over time.
+ggsurvplot(fit,xlab="Days", 
+           fun = "event",
+           conf.int = TRUE, # confidence Interval
+           palette = "lancet",
+           ggtheme = theme_bw() ,title = "Survival curves"
+)
+```
+
+
+#### Consider different groups:(International.plan:Y/N; Voice.mail.plan:Y/N)\
+
+```{r}
+table(dat$Churn)
+```
+#### Only 388 of 2666 churn.\
+
+#### Use the "strata" fuc. Get separate survival curves for different groups and the survival analysis will be done independently within each group. (One curve represents "yes" and the other curve represents "no"). Here the result is the same as without "strata" fuc (simply account for its effect as a covariate)\
+```{r}
+fit1 <- survfit(Surv(Account.length, Churn) ~ strata(International.plan), data = dat)
+print(fit1)
+fit2 <- survfit(Surv(Account.length, Churn) ~ strata(Voice.mail.plan), data = dat)
+print(fit2)
+```
+#### Conclusion fit1: International.plan=No,the median survival time is 212 days.(95%CI)[201,?];International.plan=Yes, median survival time is 133 days.(95%CI)[125,147]\
+
+#### Conclusion fit2 :Voice.mail.plan=No,the median survival time is 181 days.(95%CI)[173,?]\
+
+#### Any significant effect? we will have hypothesis testing.\
+
+```{r}
+# Visualize (KM plot) effect of group
+ggsurvplot(survfit(Surv(Account.length, Churn) ~ International.plan, data = dat),
+       pval = TRUE, # displays p-value of log-rank test of the difference between the two curves
+       conf.int = TRUE,
+       risk.table = TRUE, # Add risk table
+       surv.median.line = "hv", # Specify median survival
+       ggtheme = theme_bw(), # Change ggplot2 theme
+       palette = c("#E7B800", "#2E9FDF"),
+       title = "KM Curve for telecom churn Survival by International.plan" 
+)
+
+ggsurvplot(survfit(Surv(Account.length, Churn) ~ Voice.mail.plan, data = dat),
+       pval = TRUE, conf.int = TRUE,
+       risk.table = TRUE, # Add risk table
+       surv.median.line = "hv", # Specify median survival
+       ggtheme = theme_bw(), # Change ggplot2 theme
+       palette = c("#E7B800", "#2E9FDF"),
+       title = "KM Curve for telecom churn Survival by Voice.mail.plan" 
+)
+
+```
+
+
+```{r}
+#Cumulative risk curve/event
+ggsurvplot(fit1,
+           fun = "cumhaz", #"event"
+           conf.int = TRUE, # confidence Interval
+           palette = "lancet",
+           ggtheme = theme_bw() 
+)
+
+ggsurvplot(fit2,
+           fun = "cumhaz", #"event"
+           conf.int = TRUE, # confidence Interval
+           palette = "lancet",
+           ggtheme = theme_bw() 
+)
+```
+
+#### For the variable International.plan, as time increases, customers who choose "yes" are more likely to churn than those who choose "no".We find that the gap starts around day 70 to 100 and becomes larger in the future.For the variable Voice.mail.plan, as time increases, customers who choose "no" are more likely to churn than those who choose "yes".(“Yes”,“No” opposite) and the gap starts around day=100 and is not as large as the previous variable.\
+
+
+### Hypothesis testing and Comparing Survival Curves\
+#### Non-parametric Tests: These include tests like the Log-rank test and Wilcoxon test, which compare survival distributions between different groups or treatments without making specific assumptions about the underlying distribution.\
+
+#### The log-rank test can be used to evaluate whether or not KM curves for two or more groups are statistically equivalent. H0:is that there is no difference in survival between the groups.(approximately distributed as a chi-square test statistic)\
+
+```{r}
+# differences between groups with small p values-significant
+surv_diff1 <- survdiff(Surv(Account.length, Churn) ~ International.plan, data = dat)
+surv_diff1
+
+surv_diff2 <- survdiff(Surv(Account.length, Churn) ~ Voice.mail.plan, data = dat)
+surv_diff2
+```
+#### The log-rank test of the survival difference gives a very small p-value, indicating that the survival difference between the two groups (Y/N) of "International.plan" and "Voice.mail.plan" is significant.\
+
+### Cox Proportional Hazards Model(semi-parametric model)\
+
+#### Cox PH regression is capable of modeling the effect of multiple predictor variables on the hazard function (the risk of an event occurring at any point in time). We can use both categorical and continuous variables as predictors in the model.\
+
+#### Based on the cox model, we came to several conclusions.\
+- Low p-values (<0.05 95%CI) indicate that a variable is statistically significant in predicting the event. In the model, StateCT,MA,MT,NJ,SC,TX;International.planYes; Voice.mail.planYes; Number.vmail.messages;otal.intl.calls; Customer.service.calls are significant features.\
+
+- The Log-Likelihood Ratio Test tests the overall significance of the model. Here the p-value (=<2e-16) indicates that the model fits the data set well.\
+
+- Coef provides log hazard ratios for each variable. Exp(coef) represents the estimated hazard ratio. If exp(coef) is greater than 1, it indicates an increased risk of the event (Churn) happening for the given variable. If it's less than 1, it indicates a decreased risk.\
+
+#### Based on the summary we have variblaes: StateHI(exp(coef)=0.6), StateRI (0.78), StateVA(0.61),  Voice.mail.planYes(0.095), Total.day.minutes(0.29),  Total.eve.charge(0.0014), Total.night.minutes (0.7), Total.intl.minutes (0.004), Total.intl.calls (0.9) decreases the risk of churn.The others increase the risk of churn.\
+
+```{r}
+cox_model <- coxph(formula = Surv(Account.length, Churn) ~ ., data = dat)
+#print(cox_model)
+summary(cox_model)
+
+```
+
+```{r}
+cox1 = coxph(Surv(Account.length, Churn) ~ International.plan, data = dat)
+print(cox1)
+cox2 = coxph(Surv(Account.length, Churn) ~ Voice.mail.plan, data = dat)
+print(cox2)
+```
+
+#### Similar results with log-rank test (sigificant)\
+
+### Parametric models:\
+#### use Surv function,fit 4 models (exponential,Weibull,log-normal,Guassian)\
+
+```{r}
+# Set up Surv() object
+survdat <- Surv(time = dat$Account.length, event = dat$Churn)
+
+# Exponential model
+fit_exp <- survreg(survdat ~ 1, dist = "exponential")
+lambda <- 1 / exp(fit_exp$coef)
+
+summary(fit_exp)
+
+#Weibull model
+fit_weibull <- survreg(survdat ~ 1, dist = "weibull")
+alpha <- 1 / fit_weibull$scale
+beta <- exp(fit_weibull$coef)
+
+summary(fit_weibull)
+
+#Log-Normal
+fit_lognormal <- survreg(survdat ~ 1, dist = "lognormal")
+mu_lognormal <- fit_lognormal$coefficients
+sigma_lognormal <- fit_lognormal$scale
+
+summary(fit_lognormal)
+
+# Gaussian
+fit_gaussian <- survreg(survdat ~ 1, dist = "gaussian")
+mean_gaussian <- fit_gaussian$coefficients
+scale_gaussian <- fit_gaussian$scale
+
+summary(fit_gaussian)
+
+#plot
+tvec <- seq(0, 200, length = 201)
+plot(tvec, dexp(tvec, lambda), type = "l", ylim = c(0, 0.004), xlab = "Time", ylab = "Density", col = "black", main = "Survival Model Comparison")
+curve(dlnorm(x, meanlog = mu_lognormal, sdlog = sigma_lognormal), add = TRUE, col = "red", lty = 2)
+curve(dweibull(x, alpha, beta), add = TRUE, col = "blue", lty = 3)
+curve(dnorm(x, mean = mean_gaussian, sd = scale_gaussian), add = TRUE, col = "green", lty = 4)
+
+# Add a legend
+legend("topright", legend = c("Exponential", "Log-Normal", "Weibull", "Gaussian"), col = c("black", "red", "blue", "green"), lty = c(1, 2, 3, 4))
+
+```
+
+```{r}
+#AIC,BIC to find "best" fit
+AIC_exp=AIC(fit_exp);BIC_exp=BIC(fit_exp)
+AIC_weibull=AIC(fit_weibull);BIC_weibull=BIC(fit_weibull)
+AIC_lognormal=AIC(fit_lognormal);BIC_lognormal=BIC(fit_lognormal)
+AIC_gaussian=AIC(fit_gaussian);BIC_gaussian=BIC(fit_gaussian)
+# Create a table
+model_names <- c("Exponential", "Weibull", "Log-Normal", "Gaussian")
+AIC_values <- c(AIC_exp, AIC_weibull, AIC_lognormal, AIC_gaussian)
+BIC_values <- c(BIC_exp, BIC_weibull, BIC_lognormal, BIC_gaussian)
+
+model_table <- data.frame(Model = model_names, AIC = AIC_values, BIC = BIC_values)
+
+print(model_table)
+```
+
+#### According to the information criterion, Gaussian has the lowest AIC and BIC and now we find the best fit. \
